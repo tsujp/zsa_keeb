@@ -1,0 +1,15 @@
+To build example default firmware, from =qmk_firmware= directory execute:
+
+#+begin_src sh
+qmk compile -kb zsa/voyager -km default
+#+end_src
+
+Keyboard definitions are within the =keywords= folder.
+
+Be sure to read =keyboards/zsa/voyager/readme.md= for some compilation notes.
+
+For the default oryx keymap:
+
+#+begin_src sh
+qmk compile -kb zsa/voyager -km oryx
+#+end_src
