@@ -1,0 +1,95 @@
+ARG VERSION=41
+FROM fedora:$VERSION
+
+ARG VERSION # Unless specified will inherit value as set at top of file.
+ARG PROJECT_NAME=zsa_keeb
+
+LABEL sh.jammy.name="$PROJECT_NAME" \
+	  sh.jammy.summary="Image with $PROJECT_NAME project dependencies" \
+	  sh.jammy.box="true"
+
+ENV JAM_PROJECT="$PROJECT_NAME"
+
+RUN dnf update -y && dnf install -y \
+	git \
+	ripgrep \
+	rsync \
+	htop \
+	curl \
+	minisign \
+	man \
+	which \
+	lsof \
+	acl \
+	diffutils \
+	just \
+	\
+    python3-pip \
+    make \
+    wget \
+    gcc \
+    arm-none-eabi-gcc \
+    avr-gcc \
+    avrdude \
+    dfu-util \
+    \
+	&& dnf clean all
+
+# TODO: Install qmk per their docs via:
+# python3 -m pip install --user qmk
+
+# TODO: qmk setup per their docs via:
+# qmk setup
+# NB: Dirname must be qmk_firmware
+# qmk setup --home DIRNAME_TO_CLONE_TO
+# NB: Except for ZSA be sure to use this instead (from ZSA's repo at: https://github.com/zsa/qmk_firmware)
+# cd /home/jammy/project
+# mkdir qmk_firmware
+# cd qmk_firmware
+# qmk setup zsa/qmk_firmware -b firmware24 --home "$(pwd)"
+
+# Would you like to clone zsa/qmk_firmware to /home/jammy/project/qmk_firmware? [y/n] y
+# Would you like to set /home/jammy/project/qmk_firmware as your QMK home? [y/n] y
+# ☒ Can't find arm-none-eabi-gcc in your path.
+# ☒ Can't find avr-gcc in your path.
+# ☒ Can't find avrdude in your path.
+# ☒ Can't find dfu-programmer in your path.
+# ☒ Can't find dfu-util in your path.
+# Would you like to install dependencies? [Y/n] y
+
+# NB: qmk setup install script borked and/or zsa's not in-sync wrt this specific install script, haven't checked (yet). I needed to manually run the two copr commands after which dfu-programmer could be installed. See: https://github.com/qmk/qmk_firmware/blob/master/util/install/fedora.sh#L6-L10
+# Just checked yes ZSA's isn't as up to date, installing the copr plugin myself would fix the issue in-lieu of updating the repo itself.
+# sudo dnf copr -h >/dev/null 2>&1 || sudo dnf $SKIP_PROMPT install dnf-plugins-core
+
+# https://docs.qmk.fm/newbs_getting_started
+
+# within qmk_firmware directory: $ qmk compile -kb zsa/voyager -km default
+
+
+# https://docs.qmk.fm/newbs_building_firmware
+
+# -------------------------------------------- Namespace mapping.
+# Without the following magic adduser namespace mapping will break horribly. If you do NOT want to use it one alternative is that the Containerfile must specify no USER at all, and when calling `run` on podman-machine as user `core` `--userns keep-id:uid=501` must be passed.
+
+# UID for this account must match macOS UID that is running podman-machine (vm) as by default Podman will set up namespace mapping to said UID which is also (from macOS) default: 501.
+ARG USERNAME=jammy
+RUN adduser \
+	--groups wheel \
+	--home-dir /home/jammy \
+	--password '' \
+	--shell /bin/bash \
+	--uid 501 \
+	--user-group \
+	jammy
+# -------------------------------------------- /
+
+WORKDIR /home/$USERNAME/project
+
+USER $USERNAME
+
+CMD ["/bin/bash", "-l"]
+
+# ls -lan
+# ls -la@
+# podman top -l capeff
+# podman top -l user uid huser group hgroups
