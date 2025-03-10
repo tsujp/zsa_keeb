@@ -1,6 +1,10 @@
 [submodule "qmk_firmware"]
 	path = qmk_firmware
 	url = https://github.com/zsa/qmk_firmware.git
+	branch = firmware24
+    shallow = true
 [submodule "qmk_userspace"]
 	path = qmk_userspace
 	url = https://github.com/qmk/qmk_userspace.git
+	branch = main
+    shallow = true

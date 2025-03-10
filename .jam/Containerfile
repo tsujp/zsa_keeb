@@ -1,17 +1,11 @@
 ARG VERSION=41
-FROM fedora:$VERSION
+FROM fedora:$VERSION AS fedora-baseline:$VERSION
 
-ARG VERSION # Unless specified will inherit value as set at top of file.
-ARG PROJECT_NAME=zsa_keeb
+# TODO: Is there more optimal dnf caching? Does it even matter if we do layer caching like this?
 
-LABEL sh.jammy.name="$PROJECT_NAME" \
-	  sh.jammy.summary="Image with $PROJECT_NAME project dependencies" \
-	  sh.jammy.box="true"
-
-ENV JAM_PROJECT="$PROJECT_NAME"
-
-RUN dnf update -y && dnf install -y \
-	git \
+# Base dependencies.
+RUN dnf -y update && dnf -y install \
+  	git \
 	ripgrep \
 	rsync \
 	htop \
@@ -22,21 +16,57 @@ RUN dnf update -y && dnf install -y \
 	lsof \
 	acl \
 	diffutils \
-	just \
-	\
+	just
+
+# bsc = build stage cache
+FROM fedora-baseline:$VERSION AS bsc-1
+
+# Project-specific dependencies.
+RUN dnf -y install \
+    dnf-plugins-core \
     python3-pip \
     make \
-    wget \
     gcc \
-    arm-none-eabi-gcc \
-    avr-gcc \
-    avrdude \
-    dfu-util \
+    wget \
     \
-	&& dnf clean all
+    && dnf -y copr enable erovia/dfu-programmer
+    # Current ZSA QMK firmware has old (incorrect) fedora install script (in repo at: util/install/fedora.sh). Until ZSA rebases to upstream QMK with that script fixed this and installation of 'dnf-plugins-core' above is required.
+    # TODO: That ^.
 
-# TODO: Install qmk per their docs via:
-# python3 -m pip install --user qmk
+# Install QMK cli
+RUN python3 -m pip install qmk
+
+# -------------------------------------------- Namespace mapping.
+# Without the following magic adduser namespace mapping will break horribly. If you do NOT want to use it one alternative is that the Containerfile must specify no USER at all, and when calling `run` on podman-machine as user `core` `--userns keep-id:uid=501` must be passed.
+
+# UID for this account must match macOS UID that is running podman-machine (vm) as by default Podman will set up namespace mapping to said UID which is also (from macOS) default: 501.
+ARG USERNAME=jammy
+RUN adduser \
+	--groups wheel \
+	--home-dir /home/"$USERNAME" \
+	--password '' \
+	--shell /bin/bash \
+	--uid 501 \
+	--user-group \
+	"$USERNAME"
+# -------------------------------------------- /
+
+# Bind mount local build context (the project's git repo) so we can foreach
+# clone git submodules as a form of version control without them polluting
+# the repo "outside" of use in this container.
+RUN --mount=type=bind,source=.,target=/gitdir \
+    cd /gitdir \
+    && git -c protocol.file.allow=always submodule foreach \
+        'git clone --jobs 12 --no-local --no-remote-submodules --recurse-submodules --shallow-submodules --depth 1 --filter=tree:0 --also-filter-submodules --progress . /home/"$USERNAME"/"$sm_path" && git submodule status --recursive'
+
+RUN cd /home/"$USERNAME"/qmk_firmware && \
+    git remote add upstream  https://github.com/qmk/qmk_firmware
+
+RUN chown -hRf "$USERNAME":"$USERNAME" /home/"$USERNAME"/qmk_*
+
+# TODO: Need to run this within qmk_firmware to get rid of warning: ⚠ The official repository does not seem to be configured as git remote "upstream".
+# git remote add upstream https://github.com/qmk/qmk_firmware
+# TODO: And yes even though we're using zsa/qmk_firmware the remote named "upstream" must be set to qmk/qmk_firmware
 
 # TODO: qmk setup per their docs via:
 # qmk setup
@@ -48,46 +78,54 @@ RUN dnf update -y && dnf install -y \
 # cd qmk_firmware
 # qmk setup zsa/qmk_firmware -b firmware24 --home "$(pwd)"
 
-# Would you like to clone zsa/qmk_firmware to /home/jammy/project/qmk_firmware? [y/n] y
-# Would you like to set /home/jammy/project/qmk_firmware as your QMK home? [y/n] y
-# ☒ Can't find arm-none-eabi-gcc in your path.
-# ☒ Can't find avr-gcc in your path.
-# ☒ Can't find avrdude in your path.
-# ☒ Can't find dfu-programmer in your path.
-# ☒ Can't find dfu-util in your path.
-# Would you like to install dependencies? [Y/n] y
-
 # NB: qmk setup install script borked and/or zsa's not in-sync wrt this specific install script, haven't checked (yet). I needed to manually run the two copr commands after which dfu-programmer could be installed. See: https://github.com/qmk/qmk_firmware/blob/master/util/install/fedora.sh#L6-L10
 # Just checked yes ZSA's isn't as up to date, installing the copr plugin myself would fix the issue in-lieu of updating the repo itself.
 # sudo dnf copr -h >/dev/null 2>&1 || sudo dnf $SKIP_PROMPT install dnf-plugins-core
 
 # https://docs.qmk.fm/newbs_getting_started
-
 # within qmk_firmware directory: $ qmk compile -kb zsa/voyager -km default
-
-
 # https://docs.qmk.fm/newbs_building_firmware
 
-# -------------------------------------------- Namespace mapping.
-# Without the following magic adduser namespace mapping will break horribly. If you do NOT want to use it one alternative is that the Containerfile must specify no USER at all, and when calling `run` on podman-machine as user `core` `--userns keep-id:uid=501` must be passed.
+# Unless specified will inherit value as set at top of file.
+ARG VERSION
+ARG PROJECT_NAME=OH_NO_NAME_ME_PLEASE
 
-# UID for this account must match macOS UID that is running podman-machine (vm) as by default Podman will set up namespace mapping to said UID which is also (from macOS) default: 501.
-ARG USERNAME=jammy
-RUN adduser \
-	--groups wheel \
-	--home-dir /home/jammy \
-	--password '' \
-	--shell /bin/bash \
-	--uid 501 \
-	--user-group \
-	jammy
-# -------------------------------------------- /
+LABEL sh.jammy.name="$PROJECT_NAME" \
+	  sh.jammy.summary="Image with $PROJECT_NAME project dependencies" \
+	  sh.jammy.box="true"
 
-WORKDIR /home/$USERNAME/project
+ENV JAM_PROJECT="$PROJECT_NAME"
+
+# WORKDIR /home/$USERNAME/project
+WORKDIR /home/$USERNAME
 
 USER $USERNAME
 
-CMD ["/bin/bash", "-l"]
+# Configure QMK
+RUN qmk config user.qmk_home=/home/"$USERNAME"/qmk_firmware && \
+    qmk config user.overlay_dir=/home/"$USERNAME"/qmk_userspace && \
+    qmk config user.keyboard=zsa/voyager && \
+    qmk setup -y
+    # python3 -m pip install --user -r /home/jammy/qmk_firmware/requirements.txt && \
+
+# XXX: If qmk setup asks us anything we need to answer (e.g. path to a directory etc) we fucked up, all this should already be set-up by us we only want qmk setup to install dependencies and check our environment.
+
+# On the version of QMK that ZSA currently uses `qmk doctor -y` exits with code 1 when avr-gcc is newer than 8.x, see:
+# (1) https://github.com/zsa/qmk_firmware/blob/12c7a1f4b16633182592f5f181ff91609aacca69/lib/python/qmk/cli/doctor/main.py#L185
+# (2) https://github.com/zsa/qmk_firmware/blob/12c7a1f4b16633182592f5f181ff91609aacca69/lib/python/qmk/cli/doctor/check.py#L50-L61
+# This is no-bueno as it causes our image build to fail. Curiously `qmk setup -y` runs the same checks but does not report an exit status of 1, while still installing dependencies etc. Until ZSA updates their QMK version we'll use the latter.
+# TODO: When ZSA updates QMK version such that `qmk doctor -y` behaves well, revert back to that.
+
+# Finally clean up dnf cache
+RUN dnf clean all
+
+# -------------------------------------------- XXX: Workaround for overlay-fs setup.
+RUN cd /home/"$USERNAME"/qmk_userspace && \
+    rm -rf qmk.json keyboards && \
+    ln --symbolic /home/"$USERNAME"/project/{qmk.json,keyboards} .
+# -------------------------------------------- /
+
+WORKDIR /home/$USERNAME/project
 
 # ls -lan
 # ls -la@
