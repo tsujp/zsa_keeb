@@ -1,0 +1,19 @@
+# TODO: More generic (not super hardcoded paths) as and when.
+
+compile:
+    #!/usr/bin/env bash
+    cd /home/jammy/qmk_userspace
+    qmk compile -kb zsa/voyager -km tsujp
+
+copy-firmware:
+    #!/usr/bin/env bash
+    timestamp="$(date +%s)"
+
+    cp -p \
+        /home/jammy/qmk_userspace/zsa_voyager_tsujp.bin \
+        {{justfile_directory()}}/firmware_out/
+
+    cd {{justfile_directory()}}/firmware_out
+    mv zsa_voyager_tsujp.bin "${timestamp}__$(sha256sum zsa_voyager_tsujp.bin | cut -c1-7)__zsa_voyager_tsujp.bin"
+
+build: compile copy-firmware
